@@ -36,7 +36,7 @@ def make_tools(interpreter, workdir: str) -> list[dict]:
             "function": {
                 "name": "inspect_csv",
                 "description": (
-                    "Show shape, dtypes, missing values, and first 5 rows of a CSV file. "
+                    "Show shape, dtypes, missing values, statistics, and sample rows of a CSV file. "
                     "Always use this instead of read_file for CSV/TSV data files."
                 ),
                 "parameters": {
@@ -55,9 +55,10 @@ def make_tools(interpreter, workdir: str) -> list[dict]:
                 "description": (
                     "Execute Python code in a persistent interpreter. "
                     "Variables and imports persist between calls. "
-                    "All file paths must be absolute or relative to the working directory. "
+                    "numpy (np), pandas (pd), and common sklearn utilities are pre-imported. "
+                    "WORKDIR variable is set to the competition directory. "
                     "Print results you want to see. "
-                    "Write submission.csv to the workdir when ready."
+                    "Write submission.csv to WORKDIR when ready."
                 ),
                 "parameters": {
                     "type": "object",
@@ -68,7 +69,22 @@ def make_tools(interpreter, workdir: str) -> list[dict]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "validate_submission",
+                "description": (
+                    "Validate submission.csv against sample_submission.csv. "
+                    "Checks columns, row count, dtypes, and missing values. "
+                    "Call this before declaring DONE."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
     ]
+
+    # One-time setup injected into interpreter
+    _setup_done = [False]
 
     def dispatch(name: str, args: dict) -> str:
         if name == "list_files":
@@ -78,10 +94,14 @@ def make_tools(interpreter, workdir: str) -> list[dict]:
         elif name == "inspect_csv":
             return _inspect_csv(interpreter, workdir, args["path"])
         elif name == "run_python":
-            # Inject workdir as WORKDIR variable on first use
-            setup = f"import os; os.chdir({repr(workdir)}); WORKDIR = {repr(workdir)}\n"
-            full_code = setup + args["code"]
-            return interpreter.run(full_code)
+            # Inject workdir as WORKDIR variable on first use only
+            if not _setup_done[0]:
+                setup = f"import os; os.chdir({repr(workdir)}); WORKDIR = {repr(workdir)}\n"
+                interpreter.run(setup)
+                _setup_done[0] = True
+            return interpreter.run(args["code"])
+        elif name == "validate_submission":
+            return _validate_submission(workdir)
         else:
             return f"Unknown tool: {name}"
 
@@ -124,8 +144,68 @@ import pandas as pd
 df = pd.read_csv({repr(full)})
 print(f"Shape: {{df.shape}}")
 print(f"Columns: {{list(df.columns)}}")
-print(f"Dtypes:\\n{{df.dtypes}}")
-print(f"Missing values:\\n{{df.isnull().sum()}}")
+print(f"\\nDtypes:\\n{{df.dtypes}}")
+print(f"\\nMissing values:\\n{{df.isnull().sum()}}")
+print(f"\\nNumeric statistics:\\n{{df.describe()}}")
+# Show value counts for low-cardinality categorical columns
+cat_cols = [c for c in df.select_dtypes(include='object').columns if df[c].nunique() <= 20]
+if cat_cols:
+    print("\\nCategorical value counts:")
+    for col in cat_cols[:5]:
+        print(f"  {{col}} (nunique={{df[col].nunique()}}): {{df[col].value_counts().head(5).to_dict()}}")
 print(f"\\nFirst 5 rows:\\n{{df.head()}}")
 """
     return interpreter.run(code)
+
+
+def _validate_submission(workdir: str) -> str:
+    submission_path = os.path.join(workdir, "submission.csv")
+    if not os.path.exists(submission_path):
+        return "ERROR: submission.csv not found in workdir."
+
+    # Find sample_submission
+    sample_path = None
+    for name in ["sample_submission.csv", "sample_submission.csv.gz"]:
+        candidate = os.path.join(workdir, name)
+        if os.path.exists(candidate):
+            sample_path = candidate
+            break
+
+    try:
+        import pandas as pd
+        sub = pd.read_csv(submission_path)
+
+        errors = []
+        warnings = []
+
+        if sample_path:
+            sample = pd.read_csv(sample_path)
+            # Check columns
+            if list(sub.columns) != list(sample.columns):
+                errors.append(
+                    f"Column mismatch: got {list(sub.columns)}, expected {list(sample.columns)}"
+                )
+            # Check row count
+            if len(sub) != len(sample):
+                errors.append(
+                    f"Row count mismatch: got {len(sub)}, expected {len(sample)}"
+                )
+        else:
+            warnings.append("sample_submission.csv not found — skipping column/row count checks")
+
+        # Check for NaN in prediction columns (all columns except first ID col)
+        pred_cols = sub.columns[1:] if len(sub.columns) > 1 else sub.columns
+        nan_counts = sub[pred_cols].isnull().sum()
+        nan_cols = nan_counts[nan_counts > 0]
+        if not nan_cols.empty:
+            errors.append(f"NaN values in prediction columns: {nan_cols.to_dict()}")
+
+        if errors:
+            return "VALIDATION FAILED:\n" + "\n".join(f"  - {e}" for e in errors)
+
+        msg = f"VALIDATION PASSED: {len(sub)} rows, columns={list(sub.columns)}"
+        if warnings:
+            msg += "\nWarnings:\n" + "\n".join(f"  - {w}" for w in warnings)
+        return msg
+    except Exception as e:
+        return f"Validation error: {e}"

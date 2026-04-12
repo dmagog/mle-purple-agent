@@ -9,7 +9,7 @@ import threading
 import uuid
 
 
-TIMEOUT = 120  # seconds per code block
+TIMEOUT = 300  # seconds per code block
 
 
 class PersistentInterpreter:
@@ -70,7 +70,19 @@ print({repr(sentinel)})
 
 _REPL_BOOTSTRAP = """
 import sys, os
+import gc
 __globals = {}
+
+# Pre-import common ML libraries so agent doesn't waste tokens importing them
+_bootstrap_code = '''
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, roc_auc_score, mean_squared_error
+'''
+exec(compile(_bootstrap_code, '<bootstrap>', 'exec'), __globals)
+
 while True:
     code = sys.stdin.readline()
     if not code:

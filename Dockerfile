@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir --timeout 300 \
 
 RUN pip install --no-cache-dir --timeout 300 \
     xgboost>=2.0.0 \
-    lightgbm>=4.3.0
+    lightgbm>=4.3.0 \
+    catboost>=1.2.0
 
 # Install framework + API deps
 RUN pip install --no-cache-dir --timeout 300 \
