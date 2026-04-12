@@ -3,10 +3,8 @@
 
   config_schema: {
     type: "object",
-    properties: {
-      openrouter_api_key: { type: "string", secret: true },
-    },
-    required: ["openrouter_api_key"],
+    properties: {},
+    required: [],
     additionalProperties: false,
   },
 
@@ -14,7 +12,7 @@
     image: "dmagog/mle-purple-agent:latest",
     entrypoint: "python server.py --host 0.0.0.0 --port 8000",
     env: {
-      OPENROUTER_API_KEY: "${config.openrouter_api_key}",
+      OPENROUTER_API_KEY: "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",
       OPENAI_BASE_URL: "https://openrouter.ai/api/v1",
       MODEL_NAME: "nvidia/nemotron-3-super-120b-a12b:free",
     },
