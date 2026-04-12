@@ -7,37 +7,78 @@ import os
 import logging
 import time
 
-from openai import OpenAI
+from openai import OpenAI, APIConnectionError, APITimeoutError, APIStatusError
 
 from interpreter import PersistentInterpreter
 from tools import make_tools
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 15
+MAX_ITERATIONS = 25
 SYSTEM_PROMPT = """You are an expert ML engineer solving a Kaggle competition.
+Your goal: produce a valid submission.csv that maximizes the competition score.
 
-Your goal: produce a valid submission.csv file that maximizes the competition score.
+## Execution Plan (follow this order strictly)
 
-## Workflow
-1. Call list_files to see what's available.
-2. Call inspect_csv on train.csv and test.csv to understand the data.
-3. Read the task description file (overview.txt, description.md, or similar).
-4. Write Python code to build and train a model, then generate predictions.
-5. Save predictions as submission.csv matching the sample_submission.csv format exactly.
+**Iteration 1:** Call inspect_csv on train.csv AND test.csv (both in one step if possible).
+**Iteration 2:** Call read_file on the description/overview file AND inspect sample_submission.csv.
+**Iterations 3-4:** Feature engineering + preprocessing pipeline in run_python.
+**Iterations 5-9:** Train CatBoost, LightGBM, and XGBoost with cross-validation. Print CV score after each.
+**Iterations 10-11:** Build ensemble (weighted average by CV score). Save as submission.csv.
+**Iteration 12:** Call validate_submission to confirm the file is correct. Fix any issues.
+**Final:** Say "DONE".
+
+## Feature Engineering (always apply for tabular data)
+- Parse composite string columns (e.g. "A/12/B" → deck, num, side)
+- Create aggregate features: group means/medians, ratios, sums
+- Fill missing numerics with median, categoricals with mode
+- Label-encode or ordinal-encode all string/object columns
+- For binary classification: check class balance, use scale_pos_weight if imbalanced
+
+## Model Training (use these exact defaults)
+```python
+from catboost import CatBoostClassifier, CatBoostRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
+from xgboost import XGBClassifier, XGBRegressor
+from sklearn.model_selection import StratifiedKFold, KFold
+import numpy as np
+
+# CatBoost — handles categoricals natively, pass cat_features list
+cat_model = CatBoostClassifier(
+    iterations=1000, learning_rate=0.05, depth=6,
+    eval_metric='Accuracy', random_seed=42,
+    early_stopping_rounds=50, verbose=100
+)
+
+# LightGBM
+lgb_model = LGBMClassifier(
+    n_estimators=1000, learning_rate=0.05, num_leaves=31,
+    random_state=42, n_jobs=-1, verbose=-1
+)
+
+# XGBoost
+xgb_model = XGBClassifier(
+    n_estimators=1000, learning_rate=0.05, max_depth=6,
+    random_state=42, n_jobs=-1, verbosity=0,
+    eval_metric='logloss', early_stopping_rounds=50
+)
+```
+
+## Ensemble
+- Use 5-fold CV; collect out-of-fold predictions and test predictions per fold
+- Weight models by their CV score (higher CV = higher weight)
+- Average weighted test predictions for final submission
 
 ## Rules
-- Use inspect_csv for any CSV file, never read_file on large data files.
-- After each run_python call, check the output carefully for errors.
-- Always validate submission.csv format against sample_submission.csv before finishing.
-- Prefer fast, reliable models: XGBoost, LightGBM, RandomForest, or simple neural nets.
-- For tabular data: do feature engineering, handle missing values, use cross-validation.
-- If a model fails, try a simpler approach — a valid submission beats no submission.
-- When submission.csv is ready and validated, say "DONE" and stop calling tools.
+- NEVER read_file on large CSVs — use inspect_csv
+- After every run_python, check output for errors before continuing
+- If a model throws an error, fix it — do not skip it
+- A valid submission is mandatory; fall back to a single model if ensemble fails
+- Write submission.csv to WORKDIR
 
 ## Important
-All files are in WORKDIR (set automatically). Use relative or absolute paths.
-Write submission.csv to WORKDIR.
+numpy, pandas, sklearn are pre-imported. Use WORKDIR variable for file paths.
+For regression: use RMSE/MAE CV metric. For classification: use accuracy or AUC.
 """
 
 
@@ -85,13 +126,22 @@ def run_ml_agent(workdir: str, instructions: str, on_status=None) -> str:
                     max_tokens=4096,
                 )
                 break
-            except Exception as api_err:
+            except (APIConnectionError, APITimeoutError) as api_err:
                 if attempt < 3:
                     wait = 2 ** attempt  # 1, 2, 4 seconds
-                    logger.warning(f"API error (attempt {attempt+1}/4): {api_err}. Retrying in {wait}s...")
+                    logger.warning(f"Connection/timeout error (attempt {attempt+1}/4): {api_err}. Retrying in {wait}s...")
                     time.sleep(wait)
                 else:
                     raise
+            except APIStatusError as api_err:
+                if api_err.status_code in (429, 500, 502, 503) and attempt < 3:
+                    wait = 2 ** attempt
+                    logger.warning(f"API status {api_err.status_code} (attempt {attempt+1}/4): {api_err}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise  # Don't retry 400, 401, 403, or exhausted retries
+            except Exception:
+                raise  # Don't retry unknown errors
 
         msg = response.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
@@ -128,8 +178,8 @@ def run_ml_agent(workdir: str, instructions: str, on_status=None) -> str:
             result = dispatch(name, args)
 
             # Truncate very long outputs
-            if len(result) > 8000:
-                result = result[:4000] + "\n...[truncated]...\n" + result[-2000:]
+            if len(result) > 15000:
+                result = result[:10000] + "\n...[truncated]...\n" + result[-5000:]
 
             messages.append({
                 "role": "tool",
