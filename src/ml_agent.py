@@ -5,6 +5,7 @@ Uses OpenAI-compatible API (works with OpenRouter).
 import json
 import os
 import logging
+import time
 
 from openai import OpenAI
 
@@ -73,13 +74,24 @@ def run_ml_agent(workdir: str, instructions: str, on_status=None) -> str:
 
         logger.info(f"Iteration {iteration + 1}")
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tool_schemas,
-            tool_choice="auto",
-            max_tokens=4096,
-        )
+        response = None
+        for attempt in range(4):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tool_schemas,
+                    tool_choice="auto",
+                    max_tokens=4096,
+                )
+                break
+            except Exception as api_err:
+                if attempt < 3:
+                    wait = 2 ** attempt  # 1, 2, 4 seconds
+                    logger.warning(f"API error (attempt {attempt+1}/4): {api_err}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
 
         msg = response.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
