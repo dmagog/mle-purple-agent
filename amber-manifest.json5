@@ -1,0 +1,37 @@
+{
+  manifest_version: "0.1.0",
+
+  config_schema: {
+    type: "object",
+    properties: {
+      openrouter_api_key: { type: "string", secret: true },
+    },
+    required: ["openrouter_api_key"],
+    additionalProperties: false,
+  },
+
+  program: {
+    image: "dmagog/mle-purple-agent:latest",
+    entrypoint: "python server.py --host 0.0.0.0 --port 8000",
+    env: {
+      OPENROUTER_API_KEY: "${config.openrouter_api_key}",
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1",
+      MODEL_NAME: "nvidia/nemotron-3-super-120b-a12b:free",
+    },
+    network: {
+      endpoints: [
+        { name: "a2a_endpoint", port: 8000 },
+      ],
+    },
+  },
+
+  provides: {
+    a2a: { kind: "a2a", endpoint: "a2a_endpoint" },
+  },
+
+  exports: { a2a: "a2a" },
+
+  metadata: {
+    participant_roles: ["agent"],
+  },
+}
