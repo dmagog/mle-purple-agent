@@ -8,6 +8,7 @@ import logging
 import os
 import tarfile
 import tempfile
+import uuid
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -35,6 +36,7 @@ def _make_status(state: TaskState, text: str) -> TaskStatus:
     return TaskStatus(
         state=state,
         message=Message(
+            messageId=str(uuid.uuid4()),
             role="agent",
             parts=[Part(root=TextPart(text=text))],
         ),
