@@ -89,6 +89,7 @@ class Executor(AgentExecutor):
             csv_b64 = base64.b64encode(csv_bytes).decode()
 
             artifact = Artifact(
+                artifactId=str(uuid.uuid4()),
                 name="submission.csv",
                 parts=[
                     Part(
