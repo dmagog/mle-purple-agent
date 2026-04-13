@@ -4,7 +4,6 @@ Variables, imports, and trained objects are preserved between calls.
 """
 import subprocess
 import sys
-import textwrap
 import threading
 import uuid
 
@@ -26,16 +25,23 @@ class PersistentInterpreter:
     def run(self, code: str) -> str:
         """Execute code and return combined stdout+stderr output."""
         with self._lock:
+            if self._proc.poll() is not None:
+                return "[ERROR: interpreter process has terminated]"
+
             sentinel = f"__DONE_{uuid.uuid4().hex}__"
-            wrapped = textwrap.dedent(f"""
-try:
-    exec(compile({repr(code)}, '<cell>', 'exec'), __globals__)
-except Exception as _e:
-    import traceback
-    print(traceback.format_exc(), end='')
-print({repr(sentinel)})
-""")
-            self._proc.stdin.write(wrapped)
+
+            # Build a try/except block that catches errors and prints sentinel
+            inner = (
+                f"try:\n"
+                f"    exec(compile({repr(code)}, '<cell>', 'exec'), globals())\n"
+                f"except Exception as _e:\n"
+                f"    import traceback; print(traceback.format_exc(), end='')\n"
+                f"print({repr(sentinel)})\n"
+            )
+            # Wrap in a single-line exec() so the REPL can read it via readline()
+            one_liner = f"exec(compile({repr(inner)}, '<wrapped>', 'exec'))\n"
+
+            self._proc.stdin.write(one_liner)
             self._proc.stdin.flush()
 
             lines = []
@@ -43,6 +49,9 @@ print({repr(sentinel)})
                 line = self._read_line_timeout(TIMEOUT)
                 if line is None:
                     return "\n".join(lines) + "\n[TIMEOUT: code took too long]"
+                if line == "":
+                    # EOF — subprocess died
+                    return "\n".join(lines) + "\n[ERROR: interpreter process terminated]"
                 if line.rstrip() == sentinel:
                     break
                 lines.append(line.rstrip())
@@ -68,24 +77,30 @@ print({repr(sentinel)})
             pass
 
 
-_REPL_BOOTSTRAP = """
+_REPL_BOOTSTRAP = """\
 import sys, os
-import gc
 __globals = {}
 
-# Pre-import common ML libraries so agent doesn't waste tokens importing them
-_bootstrap_code = '''
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, roc_auc_score, mean_squared_error
-'''
-exec(compile(_bootstrap_code, '<bootstrap>', 'exec'), __globals)
+# Pre-import common ML libraries
+try:
+    import numpy as np; __globals['np'] = np
+    import pandas as pd; __globals['pd'] = pd
+    from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+    __globals.update({'cross_val_score': cross_val_score, 'StratifiedKFold': StratifiedKFold, 'KFold': KFold})
+    from sklearn.preprocessing import LabelEncoder
+    __globals['LabelEncoder'] = LabelEncoder
+    from sklearn.metrics import accuracy_score, roc_auc_score, mean_squared_error
+    __globals.update({'accuracy_score': accuracy_score, 'roc_auc_score': roc_auc_score, 'mean_squared_error': mean_squared_error})
+except Exception:
+    pass
 
 while True:
-    code = sys.stdin.readline()
-    if not code:
+    line = sys.stdin.readline()
+    if not line:
         break
-    exec(compile(code, '<input>', 'exec'), __globals)
+    try:
+        exec(compile(line, '<input>', 'exec'), __globals)
+    except Exception:
+        import traceback
+        print(traceback.format_exc(), end='')
 """
