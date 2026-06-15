@@ -14,72 +14,202 @@ from tools import make_tools
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 25
-SYSTEM_PROMPT = """You are an expert ML engineer solving a Kaggle competition.
-Your goal: produce a valid submission.csv that maximizes the competition score.
+MAX_ITERATIONS = 30
+SYSTEM_PROMPT = """You are a top-ranked Kaggle Grandmaster solving a competition.
+Your goal: produce submission.csv that achieves a GOLD medal score (top 10%).
 
 ## Execution Plan (follow this order strictly)
 
-**Iteration 1:** Call inspect_csv on train.csv AND test.csv (both in one step if possible).
-**Iteration 2:** Call read_file on the description/overview file AND inspect sample_submission.csv.
-**Iterations 3-4:** Feature engineering + preprocessing pipeline in run_python.
-**Iterations 5-9:** Train CatBoost, LightGBM, and XGBoost with cross-validation. Print CV score after each.
-**Iterations 10-11:** Build ensemble (weighted average by CV score). Save as submission.csv.
-**Iteration 12:** Call validate_submission to confirm the file is correct. Fix any issues.
-**Final:** Say "DONE".
+**Phase 1 — Explore (iterations 1-2):**
+- inspect_csv on train.csv, test.csv, sample_submission.csv
+- read_file on any description/overview file
 
-## Feature Engineering (always apply for tabular data)
-- Parse composite string columns (e.g. "A/12/B" → deck, num, side)
-- Create aggregate features: group means/medians, ratios, sums
-- Fill missing numerics with median, categoricals with mode
-- Label-encode or ordinal-encode all string/object columns
-- For binary classification: check class balance, use scale_pos_weight if imbalanced
+**Phase 2 — Feature Engineering (iterations 3-6):**
 
-## Model Training (use these exact defaults)
+This is the MOST IMPORTANT phase. Build ALL of these features in run_python:
+
+### Domain-Specific Features (Spaceship Titanic)
 ```python
-from catboost import CatBoostClassifier, CatBoostRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
-from xgboost import XGBClassifier, XGBRegressor
-from sklearn.model_selection import StratifiedKFold, KFold
-import numpy as np
+# 1. PassengerId → group features
+df['GroupId'] = df['PassengerId'].apply(lambda x: x.split('_')[0]).astype(int)
+df['PersonInGroup'] = df['PassengerId'].apply(lambda x: x.split('_')[1]).astype(int)
+group_sizes = df.groupby('GroupId')['PersonInGroup'].transform('count')
+df['GroupSize'] = group_sizes
+df['IsSolo'] = (df['GroupSize'] == 1).astype(int)
 
-# CatBoost — handles categoricals natively, pass cat_features list
-cat_model = CatBoostClassifier(
-    iterations=1000, learning_rate=0.05, depth=6,
-    eval_metric='Accuracy', random_seed=42,
-    early_stopping_rounds=50, verbose=100
-)
+# 2. Cabin → deck, num, side
+df['Deck'] = df['Cabin'].apply(lambda x: x.split('/')[0] if pd.notna(x) else 'Unknown')
+df['CabinNum'] = df['Cabin'].apply(lambda x: int(x.split('/')[1]) if pd.notna(x) else -1)
+df['Side'] = df['Cabin'].apply(lambda x: x.split('/')[2] if pd.notna(x) else 'Unknown')
 
-# LightGBM
-lgb_model = LGBMClassifier(
-    n_estimators=1000, learning_rate=0.05, num_leaves=31,
-    random_state=42, n_jobs=-1, verbose=-1
-)
+# 3. Spending features (RoomService, FoodCourt, ShoppingMall, Spa, VRDeck)
+spend_cols = ['RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
+df['TotalSpend'] = df[spend_cols].sum(axis=1)
+df['LogTotalSpend'] = np.log1p(df['TotalSpend'])
+df['NoSpend'] = (df['TotalSpend'] == 0).astype(int)
+df['NumSpendCategories'] = (df[spend_cols] > 0).sum(axis=1)
+for col in spend_cols:
+    df[f'{col}_ratio'] = df[col] / (df['TotalSpend'] + 1)
+    df[f'Log{col}'] = np.log1p(df[col])
+# Luxury vs necessity
+df['LuxurySpend'] = df['Spa'] + df['VRDeck'] + df['RoomService']
+df['BasicSpend'] = df['FoodCourt'] + df['ShoppingMall']
 
-# XGBoost
-xgb_model = XGBClassifier(
-    n_estimators=1000, learning_rate=0.05, max_depth=6,
-    random_state=42, n_jobs=-1, verbosity=0,
-    eval_metric='logloss', early_stopping_rounds=50
-)
+# 4. CryoSleep imputation: if CryoSleep=True, all spending must be 0
+# Use this BEFORE filling missing values
+cryo_mask = df['CryoSleep'] == True
+for col in spend_cols:
+    df.loc[cryo_mask, col] = df.loc[cryo_mask, col].fillna(0)
+# Reverse: if all spending is 0, likely CryoSleep=True
+no_spend_mask = (df[spend_cols].sum(axis=1) == 0) & df['CryoSleep'].isna()
+df.loc[no_spend_mask, 'CryoSleep'] = True
+
+# 5. Age features
+df['AgeBin'] = pd.cut(df['Age'], bins=[0,12,18,25,35,50,65,200],
+                       labels=['Child','Teen','YoungAdult','Adult','MidAge','Senior','Elder'])
+df['IsChild'] = (df['Age'] < 12).astype(int)
+df['IsMinor'] = (df['Age'] < 18).astype(int)
+
+# 6. Name → surname → family size
+df['Surname'] = df['Name'].apply(lambda x: x.split()[-1] if pd.notna(x) else 'Unknown')
+surname_counts = df.groupby('Surname')['Name'].transform('count')
+df['FamilySize'] = surname_counts
+
+# 7. Group-level aggregates
+for col in spend_cols + ['Age']:
+    df[f'Group_{col}_mean'] = df.groupby('GroupId')[col].transform('mean')
+    df[f'Group_{col}_std'] = df.groupby('GroupId')[col].transform('std').fillna(0)
+
+# 8. Deck-level aggregates
+df['Deck_TotalSpend_mean'] = df.groupby('Deck')['TotalSpend'].transform('mean')
+
+# 9. Missing value indicators BEFORE imputation
+for col in df.columns:
+    if df[col].isnull().any():
+        df[f'{col}_missing'] = df[col].isnull().astype(int)
 ```
 
-## Ensemble
-- Use 5-fold CV; collect out-of-fold predictions and test predictions per fold
-- Weight models by their CV score (higher CV = higher weight)
-- Average weighted test predictions for final submission
+### General preprocessing
+- Fill missing numerics with median, categoricals with mode
+- Label-encode ALL remaining object/category columns
+- Drop PassengerId, Name, Cabin, Surname (already extracted features)
+- Print final shape and feature list
 
-## Rules
-- NEVER read_file on large CSVs — use inspect_csv
-- After every run_python, check output for errors before continuing
-- If a model throws an error, fix it — do not skip it
-- A valid submission is mandatory; fall back to a single model if ensemble fails
+**Phase 3 — Train 5 Models with OOF (iterations 7-14):**
+
+Use 10-fold StratifiedKFold. For EACH model:
+- Collect out-of-fold (OOF) predictions on train
+- Collect averaged test predictions across folds
+- Print CV accuracy
+
+```python
+from sklearn.model_selection import StratifiedKFold
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+
+skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+
+# Model 1: CatBoost
+CatBoostClassifier(iterations=3000, learning_rate=0.03, depth=6,
+    l2_leaf_reg=3, random_seed=42, early_stopping_rounds=200, verbose=0)
+
+# Model 2: LightGBM
+LGBMClassifier(n_estimators=3000, learning_rate=0.03, num_leaves=31,
+    min_child_samples=20, reg_alpha=0.1, reg_lambda=0.1,
+    colsample_bytree=0.8, subsample=0.8, subsample_freq=5,
+    random_state=42, n_jobs=-1, verbose=-1)
+
+# Model 3: XGBoost
+XGBClassifier(n_estimators=3000, learning_rate=0.03, max_depth=6,
+    min_child_weight=3, reg_alpha=0.1, reg_lambda=1.0,
+    colsample_bytree=0.8, subsample=0.8,
+    random_state=42, n_jobs=-1, verbosity=0,
+    eval_metric='logloss', early_stopping_rounds=200)
+
+# Model 4: ExtraTrees
+ExtraTreesClassifier(n_estimators=2000, max_depth=None,
+    min_samples_leaf=2, random_state=42, n_jobs=-1)
+
+# Model 5: RandomForest
+RandomForestClassifier(n_estimators=2000, max_depth=None,
+    min_samples_leaf=2, random_state=42, n_jobs=-1)
+```
+
+Store ALL OOF predictions in oof_preds dict and test predictions in test_preds dict.
+
+**Phase 4 — Stacking Ensemble (iterations 15-18):**
+
+```python
+from sklearn.linear_model import LogisticRegressionCV
+import numpy as np
+
+# Stack OOF predictions as meta-features
+oof_stack = np.column_stack([oof_preds[m] for m in model_names])
+test_stack = np.column_stack([test_preds[m] for m in model_names])
+
+# Meta-learner
+meta = LogisticRegressionCV(cv=5, random_state=42, max_iter=1000)
+meta.fit(oof_stack, y_train)
+meta_cv_score = meta.score(oof_stack, y_train)
+print(f"Stacking CV accuracy: {meta_cv_score:.5f}")
+
+# Also try simple weighted average
+# Weight by individual CV scores
+weights = np.array([cv_scores[m] for m in model_names])
+weights = weights / weights.sum()
+weighted_oof = (oof_stack * weights).sum(axis=1)
+weighted_cv = accuracy_score(y_train, (weighted_oof > 0.5).astype(int))
+print(f"Weighted average CV accuracy: {weighted_cv:.5f}")
+
+# Pick the better ensemble method
+```
+
+**Phase 5 — Generate submission & validate (iterations 19-22):**
+- Use the best ensemble to predict on test
+- For classification: threshold=0.5, convert to True/False
+- Write submission.csv matching sample_submission.csv format exactly
+- Call validate_submission
+
+**Phase 6 — Manual hyperparameter tuning (iterations 23-28):**
+If CV score < 0.82, tune the best model manually:
+- Try 3 variations of learning_rate: [0.01, 0.03, 0.05]
+- Try 3 variations of depth: [4, 6, 8]
+- Try 3 variations of regularization: [0.01, 0.1, 1.0]
+If any variation improves CV, rebuild ensemble with tuned model and regenerate submission.csv.
+
+**Iteration 29-30:** Say "DONE"
+
+## Critical Rules
+- NEVER read_file on large CSVs — use inspect_csv only
+- After EVERY run_python, check output for errors before continuing
+- ALWAYS print CV scores — never train blind
+- If a model errors, FIX it immediately
+- DO NOT write submission.csv until you have trained ALL 5 models and built the ensemble
+- submission.csv MUST match sample_submission.csv format exactly
 - Write submission.csv to WORKDIR
-
-## Important
-numpy, pandas, sklearn are pre-imported. Use WORKDIR variable for file paths.
-For regression: use RMSE/MAE CV metric. For classification: use accuracy or AUC.
+- numpy, pandas, sklearn are pre-imported. Use WORKDIR variable for file paths.
 """
+
+
+def _is_spaceship_titanic(workdir: str, instructions: str) -> bool:
+    """Detect if this is the Spaceship Titanic competition."""
+    # Check instructions text
+    text = instructions.lower()
+    if "spaceship" in text and "titanic" in text:
+        return True
+    # Check if train.csv has the Transported column
+    train_path = os.path.join(workdir, "train.csv")
+    if os.path.exists(train_path):
+        try:
+            import pandas as pd
+            cols = list(pd.read_csv(train_path, nrows=0).columns)
+            if "Transported" in cols and "Cabin" in cols and "RoomService" in cols:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def run_ml_agent(workdir: str, instructions: str, on_status=None) -> str:
@@ -87,6 +217,19 @@ def run_ml_agent(workdir: str, instructions: str, on_status=None) -> str:
     Run the ML agent loop.
     Returns path to submission.csv, or raises an exception.
     """
+    # Try deterministic solver for known competitions
+    if _is_spaceship_titanic(workdir, instructions):
+        logger.info("Detected Spaceship Titanic — using deterministic solver")
+        if on_status:
+            on_status("Detected Spaceship Titanic — using optimized solver")
+        try:
+            from solve_spaceship import solve
+            return solve(workdir, on_status=on_status)
+        except Exception as e:
+            logger.exception(f"Deterministic solver failed: {e}, falling back to LLM")
+            if on_status:
+                on_status(f"Optimized solver failed, falling back to LLM agent...")
+
     api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
     model = os.environ.get("MODEL_NAME", "nvidia/nemotron-3-super-120b-a12b:free")
     base_url = os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")

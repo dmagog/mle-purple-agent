@@ -8,7 +8,7 @@ import threading
 import uuid
 
 
-TIMEOUT = 300  # seconds per code block
+TIMEOUT = 600  # seconds per code block (10 min for Optuna/heavy training)
 
 
 class PersistentInterpreter:

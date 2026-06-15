@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 *.egg-info/
+local_run/
+output/
+IMPROVEMENT_PLAN.md
