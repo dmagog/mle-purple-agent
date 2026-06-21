@@ -80,7 +80,7 @@ The method with higher CV accuracy on the full train set is selected for the fin
 
 Best MLE-bench leaderboard score **0.82069** (accuracy) — gold medal (threshold: 0.82066). Across 8 submissions, scores ranged from 0.802 to 0.821; gold was achieved once, silver once (0.816), bronze once (0.811).
 
-A note on that number: 0.82 sits around the top 6% of Spaceship Titanic's current public leaderboard — a genuinely strong score, though not the #1 rank (the very top usually comes from overfitting the small public test split). What matters most is that an autonomous agent produced it end-to-end, in a contest judged by another agent.
+A note on that number: Spaceship Titanic is a Kaggle *Getting Started* competition, which awards no Kaggle medals at all — so this gold is the **agent competition's** (MLE-bench / AgentBeats), not a Kaggle one, and there is no "Kaggle gold" to compare it against. For scale only, 0.82 sits around the top 6% of the current public leaderboard — genuinely strong, though not the #1 rank (the very top usually comes from overfitting the small public test split). What matters most is that an autonomous agent produced it end-to-end, in a contest judged by another agent.
 
 ### Provenance
 
