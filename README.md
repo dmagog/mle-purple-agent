@@ -7,7 +7,7 @@
   <tr>
     <td align="center">
       <h3>🥇 Cleared MLE-bench's gold bar — autonomously</h3>
-      On the <b>Spaceship Titanic</b> task the agent scored <b>0.82069</b>, just past MLE-bench's <b>0.82066</b> gold threshold &mdash; produced end-to-end, no human in the loop.<br/>
+      On the <b>Spaceship Titanic</b> task the agent scored <b>0.82069</b>, just past MLE-bench's <b>0.82066</b> gold threshold &mdash;<br/> produced end-to-end, no human in the loop.<br/>
       <sub>For scale, 0.82 is around the top 6% of the current Spaceship Titanic leaderboard &mdash;<br/> genuinely strong, though the headline is the autonomy, not the rank.</sub><br/><br/>
       <a href="https://agentbeats.dev/agentbeater/mle-bench">Leaderboard</a> ·
       <a href="https://github.com/RDI-Foundation/MLE-bench-agentbeats-leaderboard/commit/c181aee126e02548e61e3bbef3bce1f8ea9f49e1">Result</a> ·
