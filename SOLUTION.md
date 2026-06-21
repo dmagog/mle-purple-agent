@@ -2,9 +2,9 @@
 
 ## Task
 
-[AgentX-AgentBeats](https://rdi.berkeley.edu/agentx-agentbeats.html) (MLE-bench track): build an autonomous ML agent that receives a Kaggle competition as a tar.gz archive via the [A2A](https://github.com/google/A2A) protocol and returns `submission.csv` — without any human intervention at inference time.
+This is a solution for [AgentX-AgentBeats](https://rdi.berkeley.edu/agentx-agentbeats.html), a competition in **building AI agents** with a twist: the benchmarks are themselves agents. On the **MLE-bench** track a *green* evaluator agent hands a real Kaggle competition to a *purple* solver agent, watches it work, and grades the result. We built the purple agent.
 
-The MLE-bench green agent sends the competition bundle (data + description), our purple agent solves it and streams back the submission as a base64-encoded artifact. Evaluation happens on real Kaggle competitions. In our case — **Spaceship Titanic** (binary classification, ~8700 train / ~4300 test rows, metric: accuracy).
+Concretely: the green agent sends the competition as a tar.gz archive over the [A2A](https://github.com/google/A2A) protocol; our purple agent must read the data, engineer features, train models, and return `submission.csv` — with no human intervention at inference time, streaming it back as a base64-encoded artifact. The task drawn in our case was **Spaceship Titanic** (binary classification, ~8700 train / ~4300 test rows, metric: accuracy).
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Green Agent (MLE-bench)
 │       │ unknown competition  │
 │       ▼                     │
 │  ┌──────────────────┐       │
-│  │   LLM Agent Loop │       │  ← Gemini 3.1 Pro, 30 iterations
+│  │   LLM Agent Loop │       │  ← Gemini 2.5 Pro, 30 iterations
 │  │ (tool use + REPL)│       │
 │  └──────────────────┘       │
 └─────────────────────────────┘
@@ -78,11 +78,19 @@ The method with higher CV accuracy on the full train set is selected for the fin
 
 ### Result
 
-Best leaderboard score **0.82069** (accuracy) — gold medal (threshold: 0.82066). Across 8 submissions, scores ranged from 0.802 to 0.821; gold was achieved once, silver once (0.816), bronze once (0.811).
+Best MLE-bench leaderboard score **0.82069** (accuracy) — gold medal (threshold: 0.82066). Across 8 submissions, scores ranged from 0.802 to 0.821; gold was achieved once, silver once (0.816), bronze once (0.811).
+
+A note on that number: 0.82 sits around the top 6% of Spaceship Titanic's current public leaderboard — a genuinely strong score, though not the #1 rank (the very top usually comes from overfitting the small public test split). What matters most is that an autonomous agent produced it end-to-end, in a contest judged by another agent.
+
+### Provenance
+
+A clarification on what actually won. The gold run (0.82069, 13 Apr 2026 — [run record](https://github.com/RDI-Foundation/MLE-bench-agentbeats-leaderboard/commit/c181aee126e02548e61e3bbef3bce1f8ea9f49e1)) was produced by the **LLM-agent loop** described below, not by the deterministic solver. `solve_spaceship.py` and the competition-detection fast path were added *after* the competition, as a cleaner and fully reproducible distillation of the approach. The exact gold-winning build is preserved as git tag `gold-2026-04-13` and Docker image `dmagog/mle-purple-agent@sha256:97d33c2860ce…`.
 
 ## LLM Fallback
 
-For competitions not covered by a deterministic solver, the agent enters an iterative tool-use loop (up to 30 iterations) with an LLM (Gemini 3.1 Pro via OpenRouter).
+For competitions not covered by a deterministic solver, the agent enters an iterative tool-use loop (up to 30 iterations) with an LLM (Gemini 2.5 Pro via OpenRouter).
+
+> Model choice was empirical, not aspirational. Across our runs Gemini 2.5 Pro gave the most reliable end-to-end completions. Larger, nominally stronger models we tried did *worse* in practice — they over-engineered, drifted from the prescribed plan, or stalled mid-loop. This is consistent with a pattern others have reported from agentic competitions: a capable mid-tier reasoning model on a tight harness can beat a bigger model wrapped in more scaffolding.
 
 The system prompt prescribes a fixed plan:
 - Iterations 1–2: explore data (`inspect_csv`, `read_file`)
@@ -110,4 +118,4 @@ Retry logic: only `APIConnectionError`, `APITimeoutError`, and retryable `APISta
 
 - **A2A server** — FastAPI + uvicorn, implements the Google Agent-to-Agent protocol. The `Executor` receives tasks asynchronously, extracts the tar.gz archive to a temp directory, runs the solver in a thread pool, and streams `TaskStatusUpdateEvent` progress messages back to the green agent.
 - **Docker** — `python:3.11-slim` base with gcc/g++ for native extensions. ML libraries (CatBoost, LightGBM, XGBoost, scikit-learn) and the A2A SDK are installed in separate layers for build cache efficiency.
-- **Configuration** — OpenRouter API key is injected via environment variable. Model name is configurable (`MODEL_NAME` env var, default: Nemotron 3 Super 120B). The `amber-manifest.json5` declares the agent for the AgentBeats platform.
+- **Configuration** — OpenRouter API key is injected via environment variable; the model is selected with the `MODEL_NAME` env var. The deployed agent (see `amber-manifest.json5`) runs `google/gemini-2.5-pro`; when `MODEL_NAME` is unset the code falls back to a free model (`nvidia/nemotron-3-super-120b-a12b:free`) for local testing. The `amber-manifest.json5` declares the agent for the AgentBeats platform.
