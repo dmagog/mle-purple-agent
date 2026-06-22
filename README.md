@@ -43,6 +43,13 @@ A step-by-step educational walkthrough of the Spaceship Titanic solver (EDA → 
 - **Kaggle** (rendered, runnable): [Agents Grading Agents: Spaceship Titanic MLE-bench](https://www.kaggle.com/code/georgymamarin/agents-grading-agents-spaceship-titanic-mle-bench)
 - **In this repo**: [`spaceship-titanic-gold-medal-guide.ipynb`](spaceship-titanic-gold-medal-guide.ipynb)
 
+## Article
+
+A first-person field report — the gold result, its non-determinism, and the provenance hunt (the gold `submission.csv` lived in `/tmp` and is gone) — published on Habr:
+
+- **Habr** (Russian): [MLE-bench: золото взято, а доказательства остались в /tmp](https://habr.com/ru/articles/1050562/)
+- **In this repo**: [`writeup/habr-article.md`](writeup/habr-article.md) — mirror with reproducible figure scripts
+
 ## Stack
 
 - **Protocol**: A2A (Google Agent-to-Agent)
