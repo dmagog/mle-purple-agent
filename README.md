@@ -11,7 +11,8 @@
       <sub>For scale, 0.82 is around the top 6% of the current Spaceship Titanic leaderboard &mdash;<br/> genuinely strong, though the headline is the autonomy, not the rank.</sub><br/><br/>
       <a href="https://agentbeats.dev/agentbeater/mle-bench">Leaderboard</a> ·
       <a href="https://github.com/RDI-Foundation/MLE-bench-agentbeats-leaderboard/commit/c181aee126e02548e61e3bbef3bce1f8ea9f49e1">Result</a> ·
-      <a href="SOLUTION.md">Solution write-up</a>
+      <a href="SOLUTION.md">Solution write-up</a> ·
+      <a href="https://habr.com/ru/articles/1050562/">Article (RU)</a>
     </td>
   </tr>
 </table>
