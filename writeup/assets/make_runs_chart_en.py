@@ -47,6 +47,13 @@ ax.set_ylabel("score (accuracy, MLE-bench eval)")
 ax.set_title("Eight runs in time order: gold was caught once, not engineered",
              fontsize=12, fontweight="bold")
 ax.grid(axis="y", ls=":", alpha=0.4, zorder=0)
+
+# axis-break marks on the left spine: signal up front that the y-axis is
+# truncated (does not start at 0), so the zoom can't be read as exaggeration.
+_bk = dict(transform=ax.transAxes, color="black", clip_on=False, lw=1.3, zorder=7)
+for _y in (0.018, 0.042):
+    ax.plot((-0.013, 0.013), (_y - 0.013, _y + 0.013), **_bk)
+
 fig.text(0.5, -0.02, "13 Apr, UTC, in chronological order. Gold is run #2, early morning; a full day of edits never beat it.",
          ha="center", fontsize=8, style="italic")
 fig.text(0.5, -0.06, "Y-axis clipped (0.800-0.822) so the thresholds are visible.",
