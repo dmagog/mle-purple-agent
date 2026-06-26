@@ -35,7 +35,7 @@ Its defining idea: the benchmarks aren't fixed scripts — they're *agents* too.
 
 ## Provenance
 
-The gold result (**0.82069**, 13 Apr 2026 — [run record](https://github.com/RDI-Foundation/MLE-bench-agentbeats-leaderboard/commit/c181aee126e02548e61e3bbef3bce1f8ea9f49e1)) was produced by the **LLM-agent loop** (`src/ml_agent.py`), which improvises an ML pipeline per task; across the agent's eight runs scores ranged 0.802–0.821, with gold reached once. The deterministic `src/solve_spaceship.py` is a cleaner, reproducible reimplementation of that approach, added *after* the competition as a fast path for the known task. The exact gold-winning build is preserved as git tag `gold-2026-04-13` and Docker image `dmagog/mle-purple-agent@sha256:97d33c…`.
+The gold result (**0.82069**, 13 Apr 2026 — [run record](https://github.com/RDI-Foundation/MLE-bench-agentbeats-leaderboard/commit/c181aee126e02548e61e3bbef3bce1f8ea9f49e1)) was produced by the **LLM-agent loop** (`src/ml_agent.py`), which improvises an ML pipeline per task; across the agent's eight runs scores ranged 0.802–0.821, with gold reached once. The deterministic `src/solve_spaceship.py` is a cleaner, reproducible reimplementation of that approach, added *after* the competition as a fast path for the known task. The exact gold-winning build is preserved as git tag `gold-2026-04-13` and Docker image `dmagog/mle-purple-agent@sha256:97d33c…`. What is **not** preserved is the winning `submission.csv` itself: it lived in `/tmp` and was wiped, so the exact artifact that cleared the bar is gone — and because the loop is stochastic, re-running the build reproduces the approach, not that one gold-scoring file.
 
 ## Notebook
 
